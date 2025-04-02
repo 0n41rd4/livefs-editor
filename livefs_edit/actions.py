@@ -366,6 +366,11 @@ def cmdline_config_files(ctxt):
 def add_xorriso_args(ctx, xorriso_args: List[str] = ()):
     ctx._xorriso_extra_args.extend(xorriso_args)
 
+@register_action()
+def add_xorriso_personality(ctx, xorriso_personality: str = "mkisofs"):
+    if xorriso_personality not in ("mkisofs", "none"):
+        raise Exception(f"invalid xorriso personality {xorriso_personality!r}, only 'mkisofs' or 'none' is allowed")
+    ctx._xorriso_personality = xorriso_personality
 
 @register_action()
 def add_cmdline_arg(ctxt, arg, persist: bool = True):

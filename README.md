@@ -230,6 +230,13 @@ user).
 Add one or more extra arguments for `xorriso`, after the ones that
 livefs-editor already supplies.
 
+### add-xorriso-personality
+
+**argument**: `xorriso_personality` string
+
+Specify a `xorriso` personality. Only `mkisofs` and `none` are
+supported.
+
 ### resign-pool
 
 This will generate a new Ed25519 GPG key, sign the package repository

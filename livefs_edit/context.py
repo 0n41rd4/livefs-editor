@@ -70,6 +70,7 @@ class EditContext:
         self._mounts = []
         self._squash_mounts = {}
         self._xorriso_extra_args = []
+        self._xorriso_personality = "mkisofs"
 
     def run(self, cmd, check=True, **kw):
         if self.debug:
@@ -324,13 +325,18 @@ class EditContext:
         cp = self.run_capture([
             'xorriso',
             '-indev', self.source_path,
-            '-report_el_torito', 'as_mkisofs',
-            ])
-        opts = shlex.split(cp.stdout)
+            '-report_el_torito', 'as_mkisofs' if self._xorriso_personality == "mkisofs" else 'cmd',
+        ])
+        opts = [arg.replace("imported_iso", "local_fs") for arg in shlex.split(cp.stdout)]
         with self.logged("recreating ISO"):
-            cmd = ['xorriso', '-as', 'mkisofs'] + opts + \
-                ['-o', destpath, '-V', 'Ubuntu custom', self.p('new/iso')] + \
-                self._xorriso_extra_args
+            if self._xorriso_personality == "mkisofs":
+                cmd = ['xorriso', '-as', 'mkisofs'] + opts + \
+                    ['-o', destpath, '-V', 'Ubuntu custom', self.p('new/iso')] + \
+                    self._xorriso_extra_args
+            else:
+                cmd = ['xorriso', '-outdev', destpath] + opts + self._xorriso_extra_args + \
+                    ['-volid', 'Ubuntu custom', '-fs', '64m', '-map', self.p('new/iso'), '/']
+
             self.log("running: " + ' '.join(map(shlex.quote, cmd)))
             self.run(cmd)
 
