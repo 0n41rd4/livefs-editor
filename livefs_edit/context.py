@@ -19,6 +19,7 @@ import contextlib
 import glob
 import json
 import os
+import re
 import shlex
 import shutil
 import subprocess
@@ -71,6 +72,9 @@ class EditContext:
         self._squash_mounts = {}
         self._xorriso_extra_args = []
         self._xorriso_personality = "mkisofs"
+        self._preserved_partitions = []
+        self._new_partitions = []
+        self._final_partitions = []
 
     def run(self, cmd, check=True, **kw):
         if self.debug:
@@ -308,6 +312,116 @@ class EditContext:
         self._source_overlay = self.add_overlay(
             source_mount, self.p('new/iso'))
 
+    def get_partition_info(self, sourcepath, partition_number):
+        cp = self.run_capture(["sgdisk", "-i", str(partition_number), sourcepath])
+        part_info = {}
+        for line in cp.stdout.splitlines():
+            if "Partition GUID" in line:
+                part_info["type"] = line.split(":")[1].strip().split(" ")[0]
+            elif "First sector" in line:
+                part_info["source_start"] = int(line.split(":")[1].strip().split(" ")[0])
+            elif "Last sector" in line:
+                part_info["source_end"] = int(line.split(":")[1].strip().split(" ")[0])
+            elif "Partition name" in line:
+                part_info["name"] = line.split(":")[1].strip().split(" ")[0].strip("'")
+        if part_info:
+            return part_info
+        else:
+            raise Exception(f"Could not retrieve partition information for partition {partition_number} on {sourcepath}")
+
+    def write_partition(self, part_info, source_path, destpath):
+        start = part_info["source_start"]
+        end = part_info["source_end"]
+        size = end - start
+        dd_command = [
+            "dd",
+            "if={}".format(source_path),
+            "of={}".format(destpath),
+            "bs=512",
+            "skip={}".format(start),
+            "seek={}".format(part_info["dest_start"]),
+            "count={}".format(size),
+            "conv=notrunc"
+        ]
+        self.log("running: " + ' '.join(map(shlex.quote, dd_command)))
+        self.run(dd_command)
+
+    def process_existing_partitions(self, destpath):
+        cp = self.run_capture(["sgdisk", "-p", destpath])
+        for line in cp.stdout.splitlines():
+            match = re.match(r"\s*(\d+)\s+\d+\s+\d+\s+\S+\s+\S+\s+(\S+)\s+.*", line)
+            if match:
+                part_num, part_type = match.groups()
+                if part_type == "EF00":
+                    part_info = self.get_partition_info(destpath, part_num)
+                    part_info["number"] = 0
+                    part_info["dest_start"] = part_info["source_start"]
+                    part_info["dest_end"] = part_info["source_end"]
+                    self._final_partitions.append(part_info)
+                remove_command = ["sgdisk", destpath]
+                remove_command.append("-d {}".format(part_num))
+                self.log("running: " + ' '.join(map(shlex.quote, remove_command)))
+                self.run(remove_command)
+
+    def add_preserved_partitions(self, destpath):
+        for entry in self._preserved_partitions:
+            part_info = self.get_partition_info(self.source_path, entry["number"])
+            if entry.get("type"):
+                part_info["type"] = entry["type"]
+            if entry.get("start"):
+                part_info["dest_start"] = entry["start"]
+            else:
+                part_info["dest_start"] = part_info["source_start"]
+            if entry.get("name"):
+                part_info["name"] = entry["name"]
+            part_info["dest_end"] = part_info["dest_start"] + part_info["source_end"] - part_info["source_start"]
+            part_info["number"] = entry["as"]
+            self.write_partition(part_info, self.source_path, destpath)
+            self._final_partitions.append(part_info)
+
+    def add_new_partitions(self, destpath):
+        for new_part in self._new_partitions:
+            file_size = (os.path.getsize(new_part["sourcepath"]) + 511) // 512
+            if new_part["size"] and new_part["size"] < file_size:
+                raise Exception(f'Partition size is not big enough to contain {new_part["sourcepath"]}')
+            part_size = new_part["size"] if new_part["size"] else file_size
+            if new_part["size"]:
+                zero_command = [
+                    "dd", "if=/dev/null", f'of={destpath}', "bs=512",
+                    f'seek={new_part["start"]}', f'count={part_size}', "conv=notrunc"
+                ]
+                self.log("running: " + ' '.join(map(shlex.quote, zero_command)))
+                self.run(zero_command)
+            part_info = {
+                "number": new_part["number"],
+                "type": new_part["type"],
+                "source_start": 0,
+                "source_end": file_size,
+                "dest_start": new_part["start"],
+                "dest_end": new_part["start"] + part_size,
+                "name": new_part["name"],
+            }
+            self.write_partition(part_info, new_part["sourcepath"], destpath)
+            self._final_partitions.append(part_info)
+
+    def fix_partitions(self, destpath):
+        self.add_preserved_partitions(destpath)
+        self.add_new_partitions(destpath)
+        self.process_existing_partitions(destpath)
+        sgdisk_command = ["sgdisk", destpath, "--set-alignment=2"]
+        for part_info in self._final_partitions:
+            if part_info["number"] != 0:
+                sgdisk_command.append("-n {}:{}:{}".format(part_info["number"], part_info["dest_start"], part_info["dest_end"]))
+                sgdisk_command.append("-c {}:{}".format(part_info["number"], part_info["name"]))
+                sgdisk_command.append("-t {}:{}".format(part_info["number"], part_info["type"]))
+        for part_info in self._final_partitions:
+            if part_info["number"] == 0:
+                sgdisk_command.append("-n 0:{}:{}".format(part_info["dest_start"], part_info["dest_end"]))
+                sgdisk_command.append("-c 0:{}".format( part_info["name"]))
+                sgdisk_command.append("-t 0:{}".format(part_info["type"]))
+        self.log("running: " + ' '.join(map(shlex.quote, sgdisk_command)))
+        self.run(sgdisk_command)
+
     def repack(self, destpath):
         with self.logged("running repack hooks"):
             for hook in reversed(self._pre_repack_hooks):
@@ -319,6 +433,7 @@ class EditContext:
             self.repack_iso(destpath)
         else:
             self.repack_generic(destpath)
+        self.fix_partitions(destpath)
         return True
 
     def repack_iso(self, destpath):

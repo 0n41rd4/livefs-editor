@@ -366,11 +366,37 @@ def cmdline_config_files(ctxt):
 def add_xorriso_args(ctx, xorriso_args: List[str] = ()):
     ctx._xorriso_extra_args.extend(xorriso_args)
 
+
 @register_action()
 def add_xorriso_personality(ctx, xorriso_personality: str = "mkisofs"):
     if xorriso_personality not in ("mkisofs", "none"):
         raise Exception(f"invalid xorriso personality {xorriso_personality!r}, only 'mkisofs' or 'none' is allowed")
     ctx._xorriso_personality = xorriso_personality
+
+
+@register_action()
+def preserve_partition(ctx, part_number: int, new_part_number: int = 0, new_type: str = None, part_name: str = None, start: int = None):
+    if not (isinstance(part_number, int) and part_number >= 1):
+        raise Exception(f"Invalid partition number {part_number}, must be a positive integer")
+    if not (isinstance(new_part_number, int) and new_part_number >= 0):
+        raise Exception(f"Invalid new partition number {new_part_number}, must be a non-negative integer")
+    if new_type is not None and not isinstance(new_type, str):
+        raise Exception(f"Invalid partition type {new_type}, must be a string")
+    ctx._preserved_partitions.append({"number": part_number, "as": new_part_number, "type": new_type, "start": start, "name": part_name})
+    print(f"Preserving partition {part_number} as {new_part_number} with type {new_type if new_type else 'None'}")
+
+
+@register_action()
+def add_partition(ctx, sourcepath: str = None, part_number: int, start: int = None, part_type: str = None, part_name: str = None, size: int = None):
+    if not (isinstance(part_number, int) and part_number >= 0):
+        raise Exception(f"Invalid partition number {part_number}, must be a non-negative integer")
+    if part_type is not None and not isinstance(part_type, str):
+        raise Exception(f"Invalid partition type {part_type}, must be a string")
+    if start is None or sourcepath is None:
+        raise Exception(f"Start and sourcepath values must be provided for the partition")
+    new_part = {"number": part_number, "type": part_type, "sourcepath": sourcepath, "start": start, "size": size, "name": part_name}
+    ctx._new_partitions.append(new_part)
+
 
 @register_action()
 def add_cmdline_arg(ctxt, arg, persist: bool = True):
