@@ -237,6 +237,46 @@ livefs-editor already supplies.
 Specify a `xorriso` personality. Only `mkisofs` and `none` are
 supported.
 
+### preserve-partition
+
+**argument**: `part_number` int
+
+**argument**: `new_part_number` int
+
+**argument**: `new_type` string (optional)
+
+**argument**: `part_name` string (optional)
+
+**argument**: `start` int (optional)
+
+Specify a partition to preserve from the input ISO. Add partition
+`part_number` of the input ISO as partition `new_part_number` in
+the final ISO, with type `new_type` (either a two-byte hexadecimal
+number or a GUID), name `part_name`, and starting at sector `start`
+in the new ISO. If `start` is not provided, the partition will start
+at the same sector as in the input ISO. If `part_name` is not provided,
+the original partition name is used.
+
+### add-partition
+
+**argument**: `sourcepath` string
+
+**argument**: `part_number` int
+
+**argument**: `start` int
+
+**argument**: `part_type` string (optyional)
+
+**argument**: `part_name` string (optional)
+
+**argument**: `size` int (optional)
+
+Add the file `sourcepath` as partition `part_number` in the final ISO,
+starting at sector `start`, with type `part_type` and name `part_name`.
+By default, the partition size is set to the size of `sourcepath`, but
+it can be overridden by specifying `size` (in sectors), which must be
+large enough to contain the entire contents of `sourcepath`.
+
 ### resign-pool
 
 This will generate a new Ed25519 GPG key, sign the package repository
